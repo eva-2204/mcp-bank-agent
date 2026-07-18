@@ -12,9 +12,15 @@ const logsListEl = document.getElementById("logsList");
 const SESSION_KEY = "bank-agent-session-id";
 let sessionId = localStorage.getItem(SESSION_KEY) || null;
 
+// Эмодзи рендерятся через локально встроенные SVG (Twemoji), без обращения к внешнему CDN —
+// в некоторых сетевых окружениях CDN недоступен, а без своего шрифта эмодзи система показывает "тофу".
 function twemojify(el) {
-  if (window.twemoji) window.twemoji.parse(el, { folder: "svg", ext: ".svg" });
+  if (window.twemoji) window.twemoji.parse(el, { callback: (icon) => `vendor/emoji/${icon}.svg` });
 }
+
+// Статичные эмодзи в разметке (шапка, приветствие) тоже должны пройти через twemoji, а не
+// только те, что добавляются в чат динамически.
+twemojify(document.body);
 
 // ---------- Статус подключения ----------
 
