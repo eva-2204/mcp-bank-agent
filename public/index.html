@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Банковский агент — рекомендации и аномалии</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="topbar__icon">🏦</span>
+        <span class="topbar__title">Банковский ИИ-агент</span>
+      </div>
+      <div class="topbar__status" id="statusBar">
+        <span class="status-pill status-pill--pending" id="statusMcp">MCP: проверка…</span>
+        <span class="status-pill status-pill--pending" id="statusLlm">OpenRouter: проверка…</span>
+      </div>
+      <button class="btn btn--ghost" id="toggleLogsBtn" aria-expanded="false">📋 Логи</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel panel--connect" id="connectPanel">
+        <h2 class="panel__title">Подключение</h2>
+        <p class="panel__hint">
+          Данные подключены через официальный MCP SQLite-сервер (датасет Berka). Укажите счёт клиента,
+          чтобы агент анализировал именно его.
+        </p>
+        <label class="field">
+          <span>account_id клиента (необязательно)</span>
+          <input type="text" id="accountContext" placeholder="например, 576" inputmode="numeric" />
+        </label>
+        <div class="panel__examples">
+          <span class="panel__examples-label">Примеры вопросов:</span>
+          <button class="chip" data-prompt="Какой продукт можно предложить этому клиенту и почему?">Какой продукт предложить?</button>
+          <button class="chip" data-prompt="Есть ли в тратах этого клиента что-то подозрительное?">Есть ли аномалии в тратах?</button>
+          <button class="chip" data-prompt="Сколько лет клиенту и есть ли у него карта?">Возраст и карта клиента</button>
+        </div>
+      </section>
+
+      <section class="panel panel--chat">
+        <div class="chat" id="chat">
+          <div class="msg msg--agent">
+            <div class="msg__bubble">
+              Здравствуйте 👋 Укажите <b>account_id</b> клиента слева (или назовите его прямо в вопросе) —
+              и спросите про рекомендацию продукта или аномалии в тратах.
+            </div>
+          </div>
+        </div>
+        <form class="composer" id="composer">
+          <textarea id="messageInput" class="composer__input" placeholder="Например: есть ли смысл предложить вклад клиенту 576?" rows="1"></textarea>
+          <button type="submit" class="btn btn--primary" id="sendBtn">Отправить</button>
+        </form>
+      </section>
+
+      <aside class="panel panel--logs" id="logsPanel" hidden>
+        <h2 class="panel__title">Логи работы агента</h2>
+        <p class="panel__hint">Запрос → MCP/LLM → параметры → ответ → как использовано.</p>
+        <div class="logs" id="logsList"></div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/twemoji.min.js" crossorigin="anonymous"></script>
+  <script src="app.js"></script>
+</body>
+</html>
