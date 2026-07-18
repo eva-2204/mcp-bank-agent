@@ -1,0 +1,18 @@
+{
+  "name": "mcp-bank-agent",
+  "version": "1.0.0",
+  "description": "ИИ-агент для рекомендации банковских продуктов и поиска аномалий в тратах (Berka dataset, MCP SQLite, OpenRouter)",
+  "type": "module",
+  "main": "server/index.mjs",
+  "scripts": {
+    "build-db": "python3 scripts/build_db.py",
+    "start": "node server/index.mjs",
+    "dev": "node --watch server/index.mjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}
