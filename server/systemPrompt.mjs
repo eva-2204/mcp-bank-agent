@@ -22,6 +22,22 @@ export function buildSystemPrompt() {
 LIMIT/ORDER BY) — если данные о тратах клиента доступны через account_id, запрашивай их сам, а не проси
 пользователя прислать выписку.
 
+ЭКОНОМИЯ ВЫЗОВОВ: каждый вызов read_query — это отдельное, недешёвое обращение к LLM (лимит инструментов
+ограничен). Не делай по одному SELECT на таблицу — объединяй связанные таблицы через JOIN там, где это осмысленно.
+Для профиля клиента по account_id хватает двух запросов вместо пяти:
+1) account JOIN loan (по account_id) — это связь один-к-одному на уровне счёта, дублирования не будет:
+   SELECT a.*, l.loan_id, l.amount AS loan_amount, l.status AS loan_status, l.duration, l.payments
+   FROM account a LEFT JOIN loan l ON l.account_id = a.account_id WHERE a.account_id = ?
+2) disp JOIN client JOIN card (по account_id) — тут возможна связь один-ко-многим (у счёта бывает несколько
+   disp — владелец и доверенное лицо), поэтому в результате может быть 1-2 строки. Это НОРМА, не задвоенные
+   данные: строки различаются по disp_id/client_id, а не дублируют друг друга.
+   SELECT d.disp_id, d.type AS disp_type, c.client_id, c.birth_number, k.card_id, k.type AS card_type
+   FROM disp d LEFT JOIN client c ON c.client_id = d.client_id
+   LEFT JOIN card k ON k.disp_id = d.disp_id WHERE d.account_id = ?
+Не объединяй loan (связь один-к-одному со счётом) в один запрос вместе с disp/card (связь один-ко-многим) —
+тогда кредит задвоится по числу строк disp, и это легко перепутать с "у клиента два кредита". trans — отдельно
+(своя фильтрация по WHERE/LIMIT, объединять с остальным не нужно).
+
 СХЕМА БАЗЫ (таблицы точно соответствуют CSV-файлам исходного датасета):
 - trans(trans_id, account_id, date, type, operation, amount, balance, k_symbol, bank, account) — 1 056 320 строк,
   основная таблица транзакций. date в формате YYMMDD (текст). type: "PRIJEM" (приход) / "VYDAJ" (расход).
