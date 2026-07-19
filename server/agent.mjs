@@ -30,7 +30,7 @@ function getOrCreateSession(sessionId) {
   if (!sessions.has(sessionId)) {
     sessions.set(sessionId, {
       messages: [{ role: "system", content: buildSystemPrompt() }],
-      lastAccountContext: null,
+      lastEntityId: null,
     });
   }
   return sessions.get(sessionId);
@@ -42,6 +42,34 @@ function trimHistory(messages) {
   const system = messages[0];
   const tail = messages.slice(-MAX_HISTORY_MESSAGES);
   return [system, ...tail];
+}
+
+// Ищет номер клиента/счёта прямо в тексте вопроса (не только в поле account_id сайдбара) —
+// "клиенту 180", "счёт 570", "account_id 10451" или короткое сообщение из одной цифры.
+function extractMentionedId(text) {
+  const patterns = [
+    /клиент[а-яё]*\s*(?:№|#|id)?\s*[:=]?\s*(\d{1,8})/i,
+    /сч[её]т[а-яё]*\s*(?:№|#|id)?\s*[:=]?\s*(\d{1,8})/i,
+    /account[_\s]?id\D{0,5}(\d{1,8})/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[1];
+  }
+  const bare = text.trim().match(/^(\d{1,8})[?.!]?$/);
+  return bare ? bare[1] : null;
+}
+
+// "Мягкий" сброс при смене клиента: убираем сырые tool-call/tool-result сообщения (там были
+// конкретные цифры ПРЕДЫДУЩЕГО клиента, которые модель иногда путает с новым), но оставляем
+// человекочитаемые вопросы и финальные текстовые ответы — иначе теряется тема разговора
+// (например, "а у клиента 10451?" без повтора "есть ли у него проблемы с кредитом").
+function softResetHistory(messages) {
+  const system = messages[0];
+  const kept = messages
+    .slice(1)
+    .filter((m) => m.role === "user" || (m.role === "assistant" && m.content && !m.tool_calls?.length));
+  return [system, ...kept];
 }
 
 // Некоторые бесплатные модели (например nemotron) иногда не оформляют вызов инструмента
@@ -107,24 +135,30 @@ export class Agent {
   async handleTurn({ sessionId, userText, accountContext }) {
     const session = getOrCreateSession(sessionId);
 
-    // Переключение на другого клиента (account_id изменился) — старые вопросы/ответы про
-    // предыдущего клиента не просто бесполезны, а активно путают слабые модели (наблюдался
-    // реальный кейс: модель повторила анализ прошлого клиента вместо нового). Начинаем
-    // диалог с этим клиентом с чистого листа.
-    if (accountContext && session.lastAccountContext && accountContext !== session.lastAccountContext) {
-      session.messages = [session.messages[0]];
-      this.onLog({
-        type: "context_reset",
-        reason: "account_switch",
-        from: session.lastAccountContext,
-        to: accountContext,
-      });
+    // Номер клиента/счёта может прийти из поля сайдбара ИЛИ быть прямо в тексте вопроса
+    // ("клиенту 180?") — второе не менее надёжно, сайдбар не обязателен.
+    const mentionedId = extractMentionedId(userText);
+    const effectiveId = accountContext || mentionedId;
+
+    // Смена клиента — старые ЦИФРЫ путают слабые модели (реальный кейс: ответ про клиента А
+    // вместо Б), но полностью стирать историю нельзя — теряется тема разговора ("а у клиента
+    // 10451?" без повтора исходного вопроса). "Мягкий" сброс убирает только сырые данные.
+    if (effectiveId && session.lastEntityId && effectiveId !== session.lastEntityId) {
+      session.messages = softResetHistory(session.messages);
+      this.onLog({ type: "context_reset", reason: "id_switch", from: session.lastEntityId, to: effectiveId });
     }
-    if (accountContext) session.lastAccountContext = accountContext;
+    if (effectiveId) session.lastEntityId = effectiveId;
 
     let userContent = userText;
-    if (accountContext) {
-      userContent = `[Контекст: выбран account_id=${accountContext}. Если явно не указано иное, анализируй именно этот счёт. Не используй цифры/факты из предыдущих ответов про другие счета.]\n${userText}`;
+    if (effectiveId) {
+      userContent =
+        `[Контекст: в вопросе фигурирует номер ${effectiveId} — это может быть account_id ИЛИ client_id ` +
+        `(это разные поля с разными числами для одного человека). Если запрос по account_id=${effectiveId} ` +
+        `не находит данных, проверь через disp, не является ли это client_id: ` +
+        `SELECT account_id FROM disp WHERE client_id=${effectiveId}. Не используй цифры/факты из ответов ` +
+        `про другие номера ранее в этом диалоге.]\n${userText}`;
+    } else if (session.lastEntityId) {
+      userContent = `[Контекст: явного номера в этом вопросе нет — продолжай анализировать того же клиента/счёт (номер ${session.lastEntityId}), если из текста не следует другое.]\n${userText}`;
     }
     session.messages.push({ role: "user", content: userContent });
 
