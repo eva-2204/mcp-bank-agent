@@ -290,6 +290,35 @@ body {
   font-style: italic;
 }
 
+.msg__bubble p {
+  margin: 0 0 8px;
+}
+
+.msg__bubble ul,
+.msg__bubble ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.msg__bubble li {
+  margin-bottom: 3px;
+}
+
+.msg__bubble p:last-child,
+.msg__bubble ul:last-child,
+.msg__bubble ol:last-child {
+  margin-bottom: 0;
+}
+
+.msg__bubble code,
+.card__body code {
+  background: var(--navy-950);
+  border: 1px solid var(--navy-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+
 .cards {
   display: flex;
   flex-direction: column;

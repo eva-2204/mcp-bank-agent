@@ -63,7 +63,13 @@ function addMessage({ role, text, pending, error }) {
   wrap.className = `msg msg--${role}${pending ? " msg--pending" : ""}${error ? " msg--error" : ""}`;
   const bubble = document.createElement("div");
   bubble.className = "msg__bubble";
-  bubble.textContent = text;
+  // Ответы агента могут содержать **жирный**/списки — рендерим их, а не показываем как есть.
+  // Сообщения пользователя и служебные (pending/error) — обычный текст, разметку туда не пускаем.
+  if (role === "agent" && !pending && !error) {
+    bubble.innerHTML = renderMarkdownLite(text);
+  } else {
+    bubble.textContent = text;
+  }
   wrap.appendChild(bubble);
   chatEl.appendChild(wrap);
   twemojify(wrap);
@@ -84,8 +90,8 @@ function renderCards(cards) {
     const card = document.createElement("div");
     card.className = "card card--product";
     card.innerHTML = `
-      <div class="card__title">💳 ${escapeHtml(p.title ?? "Продукт")}</div>
-      <div class="card__body">${escapeHtml(p.reason ?? "")}</div>
+      <div class="card__title">💳 ${renderInline(p.title ?? "Продукт")}</div>
+      <div class="card__body">${renderInline(p.reason ?? "")}</div>
       ${p.confidence ? `<div class="card__meta">Уверенность: ${escapeHtml(p.confidence)}</div>` : ""}
     `;
     wrap.appendChild(card);
@@ -98,8 +104,8 @@ function renderCards(cards) {
     if (a.amount != null) metaParts.push(`${a.amount} Kč`);
     if (a.date) metaParts.push(a.date);
     card.innerHTML = `
-      <div class="card__title">⚠️ ${escapeHtml(a.summary ?? "Аномалия")}</div>
-      <div class="card__body">${escapeHtml(a.verdict ?? "")}</div>
+      <div class="card__title">⚠️ ${renderInline(a.summary ?? "Аномалия")}</div>
+      <div class="card__body">${renderInline(a.verdict ?? "")}</div>
       ${metaParts.length ? `<div class="card__meta">${escapeHtml(metaParts.join(" · "))}</div>` : ""}
     `;
     wrap.appendChild(card);
@@ -114,6 +120,70 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = String(str);
   return div.innerHTML;
+}
+
+// Инлайн-разметка внутри одной строки: **жирный**, `код`. Экранируем HTML ДО подстановки
+// тегов — сама разметка добавляется уже поверх безопасного текста, инъекция невозможна.
+function renderInline(line) {
+  return escapeHtml(line)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+// Компактный markdown для ответов агента: абзацы + маркированные/нумерованные списки.
+// Без заголовков/таблиц — модели явно запрещено их использовать в системном промпте,
+// а если всё же проскочат "###" или "|таблица|" — просто отрисуются как обычный текст строки.
+function renderMarkdownLite(text) {
+  const blocks = [];
+  let list = null; // { tag: 'ul'|'ol', items: [] }
+  let para = [];
+
+  const flushPara = () => {
+    if (para.length) {
+      blocks.push(`<p>${para.join("<br>")}</p>`);
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (list) {
+      blocks.push(`<${list.tag}>${list.items.map((i) => `<li>${i}</li>`).join("")}</${list.tag}>`);
+      list = null;
+    }
+  };
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.*)/);
+    const numbered = line.match(/^\d+[.)]\s+(.*)/);
+    if (bullet) {
+      flushPara();
+      if (!list || list.tag !== "ul") {
+        flushList();
+        list = { tag: "ul", items: [] };
+      }
+      list.items.push(renderInline(bullet[1]));
+      continue;
+    }
+    if (numbered) {
+      flushPara();
+      if (!list || list.tag !== "ol") {
+        flushList();
+        list = { tag: "ol", items: [] };
+      }
+      list.items.push(renderInline(numbered[1]));
+      continue;
+    }
+    flushList();
+    para.push(renderInline(line));
+  }
+  flushPara();
+  flushList();
+  return blocks.join("");
 }
 
 async function sendMessage(text) {
