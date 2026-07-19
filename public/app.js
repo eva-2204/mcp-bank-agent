@@ -2,7 +2,6 @@ const chatEl = document.getElementById("chat");
 const composerEl = document.getElementById("composer");
 const inputEl = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
-const accountContextEl = document.getElementById("accountContext");
 const statusMcpEl = document.getElementById("statusMcp");
 const statusLlmEl = document.getElementById("statusLlm");
 const toggleLogsBtn = document.getElementById("toggleLogsBtn");
@@ -200,11 +199,7 @@ async function sendMessage(text) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        message: text,
-        accountContext: accountContextEl.value.trim() || null,
-      }),
+      body: JSON.stringify({ sessionId, message: text }),
     });
     const data = await res.json();
 

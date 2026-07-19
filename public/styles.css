@@ -181,29 +181,6 @@ body {
 
 /* ---------- Connect panel ---------- */
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--ink-300);
-  margin-bottom: 16px;
-}
-
-.field input {
-  background: var(--navy-800);
-  border: 1px solid var(--navy-border);
-  border-radius: 8px;
-  padding: 9px 10px;
-  color: var(--white);
-  font-size: 14px;
-}
-
-.field input:focus {
-  outline: none;
-  border-color: var(--teal);
-}
-
 .panel__examples {
   display: flex;
   flex-direction: column;

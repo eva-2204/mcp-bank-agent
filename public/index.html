@@ -24,13 +24,8 @@
       <section class="panel panel--connect" id="connectPanel">
         <h2 class="panel__title">Подключение</h2>
         <p class="panel__hint">
-          Данные подключены через официальный MCP SQLite-сервер (датасет Berka). Укажите счёт клиента,
-          чтобы агент анализировал именно его.
+          Данные подключены через официальный MCP SQLite-сервер (датасет Berka).
         </p>
-        <label class="field">
-          <span>account_id клиента (необязательно)</span>
-          <input type="text" id="accountContext" placeholder="например, 576" inputmode="numeric" />
-        </label>
         <div class="panel__examples">
           <span class="panel__examples-label">Примеры вопросов:</span>
           <button class="chip" data-prompt="Какой продукт можно предложить этому клиенту и почему?">Какой продукт предложить?</button>
@@ -43,8 +38,8 @@
         <div class="chat" id="chat">
           <div class="msg msg--agent">
             <div class="msg__bubble">
-              Здравствуйте 👋 Укажите <b>account_id</b> клиента слева (или назовите его прямо в вопросе) —
-              и спросите про рекомендацию продукта или аномалии в тратах.
+              Здравствуйте 👋 Назовите <b>account_id</b> клиента прямо в вопросе (например, «какой продукт
+              предложить клиенту 576?») — и спросите про рекомендацию продукта или аномалии в тратах.
             </div>
           </div>
         </div>
