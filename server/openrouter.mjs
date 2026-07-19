@@ -6,6 +6,10 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 // а не часть того же вызова.
 const MAX_MODELS_PER_REQUEST = 3;
 
+// fetch() без таймаута может зависнуть навсегда, если OpenRouter/провайдер не отвечает —
+// тогда пользователь бесконечно видит "Анализирую данные…" без единой ошибки.
+const REQUEST_TIMEOUT_MS = 45_000;
+
 // Приоритетный список сильных бесплатных моделей с tool calling (раздел 3 ТЗ).
 // openrouter/free замыкает список как страховка на случай недоступности остальных.
 export const DEFAULT_MODELS = [
@@ -80,12 +84,15 @@ export class OpenRouterClient {
           "X-Title": "Bank Product & Anomaly Agent",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
-      this.onLog({ type: "llm_error", models, error: err.message });
-      const wrapped = new Error("OPENROUTER_NETWORK_ERROR");
-      wrapped.friendlyMessage =
-        "Не удалось связаться с OpenRouter. Проверьте подключение к интернету и попробуйте ещё раз.";
+      const isTimeout = err.name === "TimeoutError" || err.name === "AbortError";
+      this.onLog({ type: "llm_error", models, error: isTimeout ? "timeout" : err.message });
+      const wrapped = new Error(isTimeout ? "OPENROUTER_TIMEOUT" : "OPENROUTER_NETWORK_ERROR");
+      wrapped.friendlyMessage = isTimeout
+        ? `OpenRouter не ответил за ${REQUEST_TIMEOUT_MS / 1000} секунд. Возможно, выбранная модель перегружена — попробуйте ещё раз.`
+        : "Не удалось связаться с OpenRouter. Проверьте подключение к интернету и попробуйте ещё раз.";
       throw wrapped;
     }
 
