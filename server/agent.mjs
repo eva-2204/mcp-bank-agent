@@ -28,7 +28,10 @@ const sessions = new Map();
 
 function getOrCreateSession(sessionId) {
   if (!sessions.has(sessionId)) {
-    sessions.set(sessionId, { messages: [{ role: "system", content: buildSystemPrompt() }] });
+    sessions.set(sessionId, {
+      messages: [{ role: "system", content: buildSystemPrompt() }],
+      lastAccountContext: null,
+    });
   }
   return sessions.get(sessionId);
 }
@@ -104,9 +107,24 @@ export class Agent {
   async handleTurn({ sessionId, userText, accountContext }) {
     const session = getOrCreateSession(sessionId);
 
+    // Переключение на другого клиента (account_id изменился) — старые вопросы/ответы про
+    // предыдущего клиента не просто бесполезны, а активно путают слабые модели (наблюдался
+    // реальный кейс: модель повторила анализ прошлого клиента вместо нового). Начинаем
+    // диалог с этим клиентом с чистого листа.
+    if (accountContext && session.lastAccountContext && accountContext !== session.lastAccountContext) {
+      session.messages = [session.messages[0]];
+      this.onLog({
+        type: "context_reset",
+        reason: "account_switch",
+        from: session.lastAccountContext,
+        to: accountContext,
+      });
+    }
+    if (accountContext) session.lastAccountContext = accountContext;
+
     let userContent = userText;
     if (accountContext) {
-      userContent = `[Контекст: выбран account_id=${accountContext}. Если явно не указано иное, анализируй именно этот счёт.]\n${userText}`;
+      userContent = `[Контекст: выбран account_id=${accountContext}. Если явно не указано иное, анализируй именно этот счёт. Не используй цифры/факты из предыдущих ответов про другие счета.]\n${userText}`;
     }
     session.messages.push({ role: "user", content: userContent });
 
