@@ -129,9 +129,9 @@ function renderInline(line) {
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
-// Компактный markdown для ответов агента: абзацы + маркированные/нумерованные списки.
-// Без заголовков/таблиц — модели явно запрещено их использовать в системном промпте,
-// а если всё же проскочат "###" или "|таблица|" — просто отрисуются как обычный текст строки.
+// Компактный markdown для ответов агента: абзацы, списки, а также заголовки ("### ...") и
+// цитаты ("> ...") — модели запрещено их использовать в промпте, но не все следуют инструкции,
+// поэтому их всё равно сводим к обычному тексту, а не показываем "#"/">" буквально.
 function renderMarkdownLite(text) {
   const blocks = [];
   let list = null; // { tag: 'ul'|'ol', items: [] }
@@ -155,6 +155,21 @@ function renderMarkdownLite(text) {
     if (!line) {
       flushPara();
       flushList();
+      continue;
+    }
+    // Модель иногда всё равно использует заголовки/цитаты вопреки инструкции — не показываем
+    // "###"/">" буквально, а сводим к обычному (жирному для заголовков) абзацу.
+    const heading = line.match(/^#{1,6}\s+(.*)/);
+    const quote = line.match(/^>\s?(.*)/);
+    if (heading) {
+      flushPara();
+      flushList();
+      blocks.push(`<p><strong>${renderInline(heading[1])}</strong></p>`);
+      continue;
+    }
+    if (quote) {
+      flushList();
+      para.push(renderInline(quote[1]));
       continue;
     }
     const bullet = line.match(/^[-*]\s+(.*)/);

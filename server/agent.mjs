@@ -188,11 +188,12 @@ export class Agent {
     let userContent = userText;
     if (effectiveId) {
       userContent =
-        `[Контекст: в вопросе фигурирует номер ${effectiveId} — это может быть account_id ИЛИ client_id ` +
-        `(это разные поля с разными числами для одного человека). Если запрос по account_id=${effectiveId} ` +
-        `не находит данных, проверь через disp, не является ли это client_id: ` +
-        `SELECT account_id FROM disp WHERE client_id=${effectiveId}. Не используй цифры/факты из ответов ` +
-        `про другие номера ранее в этом диалоге.]\n${userText}`;
+        `[Контекст (служебная информация, не для пользователя): в вопросе фигурирует номер ${effectiveId} — ` +
+        `это может быть account_id ИЛИ client_id (разные поля с разными числами для одного человека). Если ` +
+        `запрос по account_id=${effectiveId} не находит данных, молча проверь через disp, не client_id ли это: ` +
+        `SELECT account_id FROM disp WHERE client_id=${effectiveId}. В САМОМ ОТВЕТЕ пользователю не упоминай ` +
+        `эту проверку/разницу полей вообще — просто веди анализ так, будто сразу знал нужный account_id. ` +
+        `Не используй цифры/факты из ответов про другие номера ранее в этом диалоге.]\n${userText}`;
     } else if (session.lastEntityId) {
       userContent = `[Контекст: явного номера в этом вопросе нет — продолжай анализировать того же клиента/счёт (номер ${session.lastEntityId}), если из текста не следует другое.]\n${userText}`;
     }
