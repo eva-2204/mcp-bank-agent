@@ -103,22 +103,58 @@ function parsePseudoToolCalls(content) {
   return calls.length ? calls : null;
 }
 
+function isCardsShape(parsed) {
+  return Boolean(parsed) && typeof parsed === "object" && (("products" in parsed) || ("anomalies" in parsed));
+}
+
 // Модели не всегда точно следуют инструкции про метку ```agent-cards — некоторые
-// помечают блок как обычный ```json. Принимаем оба варианта, лишь бы форма JSON совпадала.
+// помечают блок как обычный ```json, а некоторые вообще не оборачивают JSON в кавычки
+// (наблюдался живой кейс: JSON просто дописывался в конец ответа как есть — в чате он
+// повисал видимым текстом, потому что регэксп с ``` его не находил). Пробуем оба варианта.
 function extractCards(text) {
-  const match = text.match(/```(?:agent-cards|json)\s*([\s\S]*?)```/);
-  if (!match) return { text: text.trim(), cards: null };
-  try {
-    const parsed = JSON.parse(match[1].trim());
-    if (!parsed || typeof parsed !== "object" || (!("products" in parsed) && !("anomalies" in parsed))) {
-      return { text: text.trim(), cards: null };
+  const fenced = text.match(/```(?:agent-cards|json)\s*([\s\S]*?)```/);
+  if (fenced) {
+    try {
+      const parsed = JSON.parse(fenced[1].trim());
+      if (isCardsShape(parsed)) {
+        const cleanText = (text.slice(0, fenced.index) + text.slice(fenced.index + fenced[0].length)).trim();
+        return { text: cleanText, cards: parsed };
+      }
+    } catch {
+      // невалидный JSON внутри блока — идём дальше к фолбэку
     }
-    const cleanText = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim();
-    return { text: cleanText, cards: parsed };
-  } catch {
-    // если модель прислала невалидный JSON — просто отдаём текст без карточек
-    return { text: text.trim(), cards: null };
   }
+
+  // Фолбэк: JSON-объект без оборачивания, но обязательно в самом конце ответа. Ищем открывающую
+  // скобку, парную последней закрывающей, а не просто последнюю "{" — иначе ломается на
+  // вложенных объектах (у нас products/anomalies — массивы объектов).
+  const trimmed = text.trimEnd();
+  if (trimmed.endsWith("}")) {
+    let depth = 0;
+    let openIndex = -1;
+    for (let i = trimmed.length - 1; i >= 0; i--) {
+      if (trimmed[i] === "}") depth++;
+      else if (trimmed[i] === "{") {
+        depth--;
+        if (depth === 0) {
+          openIndex = i;
+          break;
+        }
+      }
+    }
+    if (openIndex !== -1) {
+      try {
+        const parsed = JSON.parse(trimmed.slice(openIndex));
+        if (isCardsShape(parsed)) {
+          return { text: trimmed.slice(0, openIndex).trim(), cards: parsed };
+        }
+      } catch {
+        // не похоже на валидный JSON — отдаём как обычный текст
+      }
+    }
+  }
+
+  return { text: text.trim(), cards: null };
 }
 
 export class Agent {
