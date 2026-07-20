@@ -11,13 +11,13 @@ const MAX_MODELS_PER_REQUEST = 3;
 const REQUEST_TIMEOUT_MS = 45_000;
 
 // Приоритетный список сильных бесплатных моделей с tool calling (раздел 3 ТЗ).
-// openrouter/free замыкает список как страховка на случай недоступности остальных.
-export const DEFAULT_MODELS = [
-  "qwen/qwen3-coder:free",
-  "nvidia/nemotron-3-super-120b-a12b:free",
-  "google/gemma-4-31b-it:free",
-  "openrouter/free",
-];
+// Сужен по итогам живого тестирования: qwen/qwen3-coder:free и google/gemma-4-31b-it:free почти
+// всегда получали upstream-ограничение "temporarily rate-limited" от своих провайдеров (Venice /
+// Google AI Studio) — то есть в подавляющем большинстве запросов просто тратили впустую первую
+// попытку, прежде чем запрос уходил дальше по цепочке. nvidia/nemotron-3-super-120b-a12b:free
+// оказалась единственной стабильно доступной моделью и реально отвечала на запросы.
+// openrouter/free замыкает список как страховка на случай недоступности остальных (раздел 3 ТЗ).
+export const DEFAULT_MODELS = ["nvidia/nemotron-3-super-120b-a12b:free", "openrouter/free"];
 
 function chunk(arr, size) {
   const out = [];
