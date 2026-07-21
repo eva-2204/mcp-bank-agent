@@ -103,6 +103,27 @@ function parsePseudoToolCalls(content) {
   return calls.length ? calls : null;
 }
 
+// Достаёт все "account_id"/"client_id"/"disp_id" значения, реально встретившиеся в результате
+// инструмента (MCP отдаёт Python-repr-подобный текст с одинарными кавычками, поэтому regex
+// не привязан к конкретному стилю кавычек).
+function extractIdLikeNumbers(result) {
+  const text = typeof result === "string" ? result : JSON.stringify(result);
+  const ids = new Set();
+  const re = /(?:account_id|client_id|disp_id)['"]?\s*:\s*(\d+)/gi;
+  let m;
+  while ((m = re.exec(text))) ids.add(m[1]);
+  return ids;
+}
+
+// Достаёт номера, к которым явно фильтрует SQL-запрос ("account_id = 5", "client_id=7").
+function extractQueriedIds(query) {
+  const ids = new Set();
+  const re = /(?:account_id|client_id)\s*=\s*(\d+)/gi;
+  let m;
+  while ((m = re.exec(query))) ids.add(m[1]);
+  return ids;
+}
+
 function isCardsShape(parsed) {
   return Boolean(parsed) && typeof parsed === "object" && (("products" in parsed) || ("anomalies" in parsed));
 }
@@ -205,6 +226,13 @@ export class Agent {
     const mcpTools = this.mcpClient.isConnected() ? this.mcpClient.toOpenAiTools(READ_ONLY_MCP_TOOLS) : [];
     const tools = [...mcpTools, DECODE_BIRTH_TOOL];
 
+    // Живой кейс: модель верно резолвила account_id для одного клиента, а через пару шагов в
+    // том же ответе внезапно обратилась к SOVершенно другому account_id (SQL-опечатка/съехавшее
+    // внимание в длинном диалоге) — и выдала реальные, но абсолютно не по адресу данные.
+    // Отслеживаем номера, которые реально фигурировали в этом ходе (сам effectiveId + всё, что
+    // фактически вернули предыдущие запросы), и предупреждаем модель при обращении к чужому номеру.
+    const allowedIds = new Set(effectiveId ? [String(effectiveId)] : []);
+
     let finalMessage = null;
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       const response = await this.openRouterClient.chatCompletion({
@@ -228,12 +256,12 @@ export class Agent {
       }
 
       for (const toolCall of toolCalls) {
+        const warning = this.checkIdConsistency(toolCall, allowedIds);
         const result = await this.executeTool(toolCall);
-        session.messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: typeof result === "string" ? result : JSON.stringify(result),
-        });
+        for (const id of extractIdLikeNumbers(result)) allowedIds.add(id);
+        let content = typeof result === "string" ? result : JSON.stringify(result);
+        if (warning) content += `\n${warning}`;
+        session.messages.push({ role: "tool", tool_call_id: toolCall.id, content });
       }
     }
 
@@ -254,6 +282,28 @@ export class Agent {
     const content = finalMessage?.content ?? "";
     const { text, cards } = extractCards(content);
     return { text, cards };
+  }
+
+  // Возвращает предупреждение (строку) если read_query фильтрует по account_id/client_id,
+  // ранее не встречавшемуся ни в вопросе, ни в результатах прошлых запросов ЭТОГО хода диалога.
+  // Не блокирует запрос — просто добавляет заметный текст к результату, чтобы модель сама себя
+  // поправила на следующем шаге, вместо того чтобы молча унести реальные, но чужие данные в ответ.
+  checkIdConsistency(toolCall, allowedIds) {
+    if (!allowedIds.size || toolCall.function?.name !== "read_query") return null;
+    let args = {};
+    try {
+      args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
+    } catch {
+      return null;
+    }
+    const queriedIds = extractQueriedIds(args.query ?? "");
+    const unexpected = [...queriedIds].filter((id) => !allowedIds.has(id));
+    if (!unexpected.length) return null;
+    this.onLog({ type: "id_mismatch_warning", query: args.query, unexpected, allowed: [...allowedIds] });
+    return (
+      `[ПРОВЕРКА: этот запрос фильтрует по ${unexpected.join(", ")}, но в этом диалоге ожидался ` +
+      `номер ${[...allowedIds].join(" или ")} — если это не намеренно, перепроверь запрос и используй верный номер.]`
+    );
   }
 
   async executeTool(toolCall) {
