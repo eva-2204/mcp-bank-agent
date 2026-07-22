@@ -103,25 +103,41 @@ function parsePseudoToolCalls(content) {
   return calls.length ? calls : null;
 }
 
-// Достаёт все "account_id"/"client_id"/"disp_id" значения, реально встретившиеся в результате
-// инструмента (MCP отдаёт Python-repr-подобный текст с одинарными кавычками, поэтому regex
-// не привязан к конкретному стилю кавычек).
+// Достаёт "account_id"/"client_id" значения, реально встретившиеся в результате инструмента
+// (MCP отдаёт Python-repr-подобный текст с одинарными кавычками, поэтому regex не привязан
+// к конкретному стилю кавычек). Поля разделены намеренно: один и тот же номер нередко является
+// РЕАЛЬНЫМ account_id для одного (не связанного) счёта и РЕАЛЬНЫМ client_id для другого клиента —
+// объединение в один пул скрывало бы именно такие совпадения (см. checkIdConsistency ниже).
 function extractIdLikeNumbers(result) {
   const text = typeof result === "string" ? result : JSON.stringify(result);
-  const ids = new Set();
-  const re = /(?:account_id|client_id|disp_id)['"]?\s*:\s*(\d+)/gi;
+  const accountIds = new Set();
+  const clientIds = new Set();
+  const reAcc = /account_id['"]?\s*:\s*(\d+)/gi;
+  const reClient = /client_id['"]?\s*:\s*(\d+)/gi;
   let m;
-  while ((m = re.exec(text))) ids.add(m[1]);
-  return ids;
+  while ((m = reAcc.exec(text))) accountIds.add(m[1]);
+  while ((m = reClient.exec(text))) clientIds.add(m[1]);
+  return { accountIds, clientIds };
 }
 
-// Достаёт номера, к которым явно фильтрует SQL-запрос ("account_id = 5", "client_id=7").
+// Достаёт номера, к которым явно фильтрует SQL-запрос ("account_id = 5", "client_id=7"), отдельно по полю.
 function extractQueriedIds(query) {
-  const ids = new Set();
-  const re = /(?:account_id|client_id)\s*=\s*(\d+)/gi;
+  const accountIds = new Set();
+  const clientIds = new Set();
+  const reAcc = /account_id\s*=\s*(\d+)/gi;
+  const reClient = /client_id\s*=\s*(\d+)/gi;
   let m;
-  while ((m = re.exec(query))) ids.add(m[1]);
-  return ids;
+  while ((m = reAcc.exec(query))) accountIds.add(m[1]);
+  while ((m = reClient.exec(query))) clientIds.add(m[1]);
+  return { accountIds, clientIds };
+}
+
+// Узнаёт запрос вида "... FROM disp WHERE client_id = <id> ..." — именно так модель (по
+// инструкции в system-промпте) резолвит "номер из вопроса" в реальный account_id, если это
+// оказался client_id. Нужен отдельно, чтобы отличить резолвинг от произвольного запроса.
+function isDispClientLookup(query, id) {
+  if (!query) return false;
+  return /from\s+disp/i.test(query) && new RegExp(`client_id\\s*=\\s*${id}\\b`).test(query);
 }
 
 function isCardsShape(parsed) {
@@ -231,7 +247,13 @@ export class Agent {
     // внимание в длинном диалоге) — и выдала реальные, но абсолютно не по адресу данные.
     // Отслеживаем номера, которые реально фигурировали в этом ходе (сам effectiveId + всё, что
     // фактически вернули предыдущие запросы), и предупреждаем модель при обращении к чужому номеру.
-    const allowedIds = new Set(effectiveId ? [String(effectiveId)] : []);
+    // account_id и client_id отслеживаются РАЗДЕЛЬНО: на старте номер из вопроса не привязан к
+    // полю, поэтому разрешён в обеих ролях — но конкретный живой баг (клиент 934 = disponent на
+    // счету 781, а account_id=934 при этом существует и принадлежит совсем другим людям) показал,
+    // что после того как disp подтвердил "это client_id, реальный счёт — другой", сам исходный
+    // номер как account_id использовать больше нельзя (см. сужение ниже, после disp-резолвинга).
+    const allowedAccountIds = new Set(effectiveId ? [String(effectiveId)] : []);
+    const allowedClientIds = new Set(effectiveId ? [String(effectiveId)] : []);
 
     let finalMessage = null;
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -256,9 +278,29 @@ export class Agent {
       }
 
       for (const toolCall of toolCalls) {
-        const warning = this.checkIdConsistency(toolCall, allowedIds);
+        const warning = this.checkIdConsistency(toolCall, allowedAccountIds, allowedClientIds);
         const result = await this.executeTool(toolCall);
-        for (const id of extractIdLikeNumbers(result)) allowedIds.add(id);
+        const { accountIds: resultAccountIds, clientIds: resultClientIds } = extractIdLikeNumbers(result);
+
+        // Живой кейс (client_id=934 → account_id=781, но account_id=934 — реальный, но
+        // совершенно другой счёт): как только disp подтвердил, что effectiveId — это client_id,
+        // ведущий на ДРУГОЙ account_id, запрещаем дальше использовать исходный номер как account_id.
+        let args = {};
+        try {
+          args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
+        } catch {
+          // не JSON — пропускаем, ниже просто не сработает сужение
+        }
+        if (
+          effectiveId &&
+          isDispClientLookup(args.query, effectiveId) &&
+          [...resultAccountIds].some((id) => id !== String(effectiveId))
+        ) {
+          allowedAccountIds.delete(String(effectiveId));
+        }
+
+        for (const id of resultAccountIds) allowedAccountIds.add(id);
+        for (const id of resultClientIds) allowedClientIds.add(id);
         let content = typeof result === "string" ? result : JSON.stringify(result);
         if (warning) content += `\n${warning}`;
         session.messages.push({ role: "tool", tool_call_id: toolCall.id, content });
@@ -288,22 +330,36 @@ export class Agent {
   // ранее не встречавшемуся ни в вопросе, ни в результатах прошлых запросов ЭТОГО хода диалога.
   // Не блокирует запрос — просто добавляет заметный текст к результату, чтобы модель сама себя
   // поправила на следующем шаге, вместо того чтобы молча унести реальные, но чужие данные в ответ.
-  checkIdConsistency(toolCall, allowedIds) {
-    if (!allowedIds.size || toolCall.function?.name !== "read_query") return null;
+  checkIdConsistency(toolCall, allowedAccountIds, allowedClientIds) {
+    if ((!allowedAccountIds.size && !allowedClientIds.size) || toolCall.function?.name !== "read_query") return null;
     let args = {};
     try {
       args = toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
     } catch {
       return null;
     }
-    const queriedIds = extractQueriedIds(args.query ?? "");
-    const unexpected = [...queriedIds].filter((id) => !allowedIds.has(id));
-    if (!unexpected.length) return null;
-    this.onLog({ type: "id_mismatch_warning", query: args.query, unexpected, allowed: [...allowedIds] });
-    return (
-      `[ПРОВЕРКА: этот запрос фильтрует по ${unexpected.join(", ")}, но в этом диалоге ожидался ` +
-      `номер ${[...allowedIds].join(" или ")} — если это не намеренно, перепроверь запрос и используй верный номер.]`
-    );
+    const { accountIds, clientIds } = extractQueriedIds(args.query ?? "");
+    const unexpectedAccount = [...accountIds].filter((id) => !allowedAccountIds.has(id));
+    const unexpectedClient = [...clientIds].filter((id) => !allowedClientIds.has(id));
+    if (!unexpectedAccount.length && !unexpectedClient.length) return null;
+
+    this.onLog({
+      type: "id_mismatch_warning",
+      query: args.query,
+      unexpectedAccount,
+      unexpectedClient,
+      allowedAccountIds: [...allowedAccountIds],
+      allowedClientIds: [...allowedClientIds],
+    });
+
+    const parts = [];
+    if (unexpectedAccount.length) {
+      parts.push(`account_id = ${unexpectedAccount.join(", ")} (ожидался ${[...allowedAccountIds].join(" или ")})`);
+    }
+    if (unexpectedClient.length) {
+      parts.push(`client_id = ${unexpectedClient.join(", ")} (ожидался ${[...allowedClientIds].join(" или ")})`);
+    }
+    return `[ПРОВЕРКА: этот запрос фильтрует по неожиданному номеру — ${parts.join("; ")} — если это не намеренно, перепроверь запрос и используй верный номер.]`;
   }
 
   async executeTool(toolCall) {
